@@ -1,0 +1,52 @@
+name: CD
+on:
+  push:
+    branches:
+      - main
+
+# This is necessary for Github Actions OIDC
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      aws_region: ${{ vars.AWS_REGION }}
+      docker_image: ${{ steps.ecr-login.outputs.registry }}/${{ vars.AWS_ECR_REPO }}@${{ steps.docker-build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{ vars.AWS_BUILD_ROLE }}
+          aws-region: ${{ vars.AWS_REGION }}
+          mask-aws-account-id: 'no'
+
+      - name: Login to AWS repository
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build image metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ steps.ecr-login.outputs.registry }}/${{ vars.AWS_ECR_REPO }}
+          # The release will be tagged with the branch and the short git sha (and latest if on main)
+          tags: |
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+
+      - name: Build, tag, and push to ECR
+        id: docker-build
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          # Replace this if the dockerfile is at a different path
+          file: .release/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

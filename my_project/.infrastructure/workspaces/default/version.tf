@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 4.46"
     }
+    github = {
+      source  = "integrations/github"
+      version = "~> 5.12"
+    }
   }
 }
 
@@ -20,4 +24,8 @@ provider "aws" {
       Environment = var.environment
     }
   }
+}
+
+provider "github" {
+  owner = split("/", var.github_repository)[0]
 }

@@ -26,6 +26,12 @@ If you are not going to use blue-green deployment then you can just add a second
 
 It's expected that you already have an Elixir app dockerized with an `entrypoint.sh` bash script. See [`my_project/README.md`](my_project/README.md) for details.
 
+The dockerfile is expected to exist in `.release/Dockerfile`. Adjust the dockerfile path in [my_project/.github/workflows/cd.yml](.github/worksflows/cd.yml) if it's in a different location.
+
 ## Go by commits
 
 To make it easier to understand what each part does you should follow the commit history. It'll go step-by-step for each feature.
+
+## Github Actions variables
+
+Github Actions will need all the variables from the terraform output set for the CD workflow to work.
