@@ -103,9 +103,17 @@ data "aws_iam_policy_document" "github_actions_ecs" {
     effect = "Allow"
     actions = [
       "ecs:UpdateService",
-      "ecs:DescribeServices"
+      "ecs:DescribeServices",
+      "codedeploy:GetDeploymentGroup",
+      "codedeploy:CreateDeployment",
+      "codedeploy:GetDeployment",
+      "codedeploy:GetDeploymentConfig",
+      "codedeploy:RegisterApplicationRevision"
     ]
     resources = [
+      aws_codedeploy_app.this.arn,
+      aws_codedeploy_deployment_group.this.arn,
+      "arn:aws:codedeploy:${var.aws_region}:${var.aws_account_id}:deploymentconfig:*",
       aws_ecs_service.app1.id,
       aws_ecs_service.app2.id
     ]
