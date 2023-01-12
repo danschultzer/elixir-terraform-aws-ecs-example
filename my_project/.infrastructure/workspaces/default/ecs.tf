@@ -92,9 +92,10 @@ resource "aws_lb" "this" {
   subnets            = module.vpc.public_subnets
 }
 
-# Target group for the load balancer
+# Target group for the load balancer for app1
 resource "aws_lb_target_group" "app1" {
-  name        = "${local.name}-app1"
+  for_each    = toset(["blue", "green"])
+  name        = "${local.name}-app1-${each.key}"
   port        = 80
   protocol    = "HTTP"
   vpc_id      = module.vpc.vpc_id
@@ -130,7 +131,13 @@ resource "aws_lb_listener" "app1" {
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.app1.arn
+    target_group_arn = aws_lb_target_group.app1["blue"].arn
+  }
+
+  lifecycle {
+    ignore_changes = [
+      default_action # This will be controlled by CodeDeploy
+    ]
   }
 }
 
@@ -248,8 +255,12 @@ resource "aws_ecs_service" "app1" {
   desired_count   = 1
   launch_type     = "FARGATE"
 
+  deployment_controller {
+    type = "CODE_DEPLOY"
+  }
+
   load_balancer {
-    target_group_arn = aws_lb_target_group.app1.arn
+    target_group_arn = aws_lb_target_group.app1["blue"].arn
     container_name   = local.ecs_container_name
     container_port   = 4000
   }
@@ -268,7 +279,8 @@ resource "aws_ecs_service" "app1" {
 
   lifecycle {
     ignore_changes = [
-      task_definition # Managed by GitHub CD pipeline
+      task_definition, # Managed by GitHub CD pipeline
+      load_balancer    # Managed by CodeDeploy for Blue Green deployments
     ]
   }
 }

@@ -85,12 +85,31 @@ jobs:
            aws ecs describe-task-definition --task-definition ${{ vars.AWS_SERVICE_NAME }}-template --query taskDefinition > task-definition.json
            echo "`jq '.family="${{ vars.AWS_SERVICE_NAME }}" | .containerDefinitions[0].image="${{ env.DOCKER_IMAGE }}"' task-definition.json`" > task-definition.json
 
+     - name: Build CodeDeploy app spec
+        run: |
+          cat <<SPEC >> apps-spec.yaml
+
+          version: 1
+
+          Resources:
+            - TargetService:
+                Type: AWS::ECS::Service
+                Properties:
+                  TaskDefinition: "Placeholder: GitHub Actions will fill this in"
+                  LoadBalancerInfo:
+                    ContainerName: "${{ vars.AWS_SERVICE_NAME }}"
+                    ContainerPort: 4000
+          SPEC
+
       - name: Deploy app1
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: task-definition.json
           cluster: ${{ vars.AWS_SERVICE_NAME }}
           service: ${{ vars.AWS_SERVICE_NAME }}-app1
+          codedeploy-appspec: apps-spec.yaml
+          codedeploy-application: ${{ vars.AWS_SERVICE_NAME }}
+          codedeploy-deployment-group: ${{ vars.AWS_SERVICE_NAME }}
           wait-for-service-stability: true
 
       - name: Deploy app2
