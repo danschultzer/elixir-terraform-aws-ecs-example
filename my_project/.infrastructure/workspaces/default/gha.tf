@@ -105,6 +105,9 @@ data "aws_iam_policy_document" "github_actions_ecs" {
       "ecs:UpdateService",
       "ecs:DescribeServices"
     ]
-    resources = [aws_ecs_service.app.id]
+    resources = [
+      aws_ecs_service.app1.id,
+      aws_ecs_service.app2.id
+    ]
   }
 }
