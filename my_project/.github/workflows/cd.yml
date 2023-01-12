@@ -50,3 +50,32 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency: deployment
+    env:
+      DOCKER_IMAGE: ${{ needs.build.outputs.docker_image }}
+    needs:
+      - build
+    steps:
+      - name: Setup AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # This will download the task definition template managed by Terraform
+      # and modify the family and image attributes.
+      - name: Build ECS task definition
+         run: |
+           aws ecs describe-task-definition --task-definition ${{ vars.AWS_SERVICE_NAME }}-template --query taskDefinition > task-definition.json
+           echo "`jq '.family="${{ vars.AWS_SERVICE_NAME }}" | .containerDefinitions[0].image="${{ env.DOCKER_IMAGE }}"' task-definition.json`" > task-definition.json
+
+      - name: Deploy container
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          cluster: ${{ vars.AWS_SERVICE_NAME }}
+          service: ${{ vars.AWS_SERVICE_NAME }}
+          wait-for-service-stability: true
