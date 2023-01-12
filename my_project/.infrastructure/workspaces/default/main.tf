@@ -17,3 +17,16 @@ module "vpc" {
   enable_dns_hostnames = true
   enable_dns_support   = true
 }
+
+# Allows the private subnet to communicate with services
+resource "aws_security_group" "vpc_endpoint" {
+  name        = "${local.name}-vpc-endpoint"
+  description = "Controls access to VPC endpoints"
+  vpc_id      = module.vpc.vpc_id
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = module.vpc.private_subnets_cidr_blocks
+  }
+}
