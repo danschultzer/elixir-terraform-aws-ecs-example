@@ -92,6 +92,11 @@ resource "aws_lb_listener" "app" {
   }
 }
 
+# CloudWatch log group
+resource "aws_cloudwatch_log_group" "group" {
+  name = "/ecs/${local.name}"
+}
+
 # Create the ECS cluster 
 resource "aws_ecs_cluster" "this" {
   name = local.name
@@ -148,6 +153,15 @@ resource "aws_ecs_task_definition" "app" {
           valueFrom = aws_secretsmanager_secret_version.db_credentials.arn
         }
       ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.group.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "stdout"
+        }
+      }
     }
   ])
 }
@@ -170,6 +184,20 @@ resource "aws_ecs_service" "app" {
     security_groups  = [aws_security_group.app.id]
     subnets          = module.vpc.private_subnets
     assign_public_ip = false
+  }
+}
+
+# Allows the application container to pass logs to CloudWatch
+resource "aws_vpc_endpoint" "logs" {
+  vpc_id              = module.vpc.vpc_id
+  private_dns_enabled = true
+  service_name        = "com.amazonaws.${var.aws_region}.logs"
+  vpc_endpoint_type   = "Interface"
+  security_group_ids  = [aws_security_group.vpc_endpoint.id]
+  subnet_ids          = module.vpc.private_subnets
+
+  tags = {
+    Name = "logs-endpoint"
   }
 }
 
@@ -214,6 +242,34 @@ resource "aws_iam_policy" "ecs_task_execution" {
             "${aws_secretsmanager_secret.secret_key_base.arn}",
             "${aws_secretsmanager_secret.db_credentials.arn}"
         ]
+    },
+    {
+        "Effect": "Allow",
+        "Action": [
+            "logs:CreateLogGroup",
+            "logs:CreateLogStream",
+            "logs:PutLogEvents"
+        ],
+        "Resource": "*"
+    }
+  ]
+}
+EOF
+}
+resource "aws_iam_policy" "ecs_task_app" {
+  name   = "${local.name}-ecs-task"
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [  
+    {
+        "Effect": "Allow",
+        "Action": [
+            "logs:CreateLogGroup",
+            "logs:CreateLogStream",
+            "logs:PutLogEvents"
+        ],
+        "Resource": "*"
     }
   ]
 }
@@ -230,4 +286,8 @@ resource "aws_iam_role" "ecs_task_app" {
 resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   role       = aws_iam_role.ecs_task_execution.name
   policy_arn = aws_iam_policy.ecs_task_execution.arn
+}
+resource "aws_iam_role_policy_attachment" "ecs_task_app" {
+  role       = aws_iam_role.ecs_task_app.name
+  policy_arn = aws_iam_policy.ecs_task_app.arn
 }
