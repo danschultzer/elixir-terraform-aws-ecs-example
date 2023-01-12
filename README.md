@@ -35,3 +35,27 @@ To make it easier to understand what each part does you should follow the commit
 ## Github Actions variables
 
 Github Actions will need all the variables from the terraform output set for the CD workflow to work.
+
+## Elixir code changes
+
+The terraform build is set up to use Secrets Manager for the database. Furthermore password rotation is supported, however that means we can't store the connection string as is. Instead we need to build it (or if you prefer you can also just pass in the host/username/password directly):
+
+```elixir
+  # AWS RDS rotation requires us to store db credentials in a specific format
+  # in Secrets Manager so we will build the DSN here
+  if credentials = System.get_env("DATABASE_CREDENTIALS") do
+    %{
+      "engine" => engine,
+      "host" => host,
+      "username" => username,
+      "password" => password,
+      "dbname" => dbname,
+      "port" => port
+    } = Jason.decode!(credentials)
+
+    dsn = "#{engine}://#{URI.encode_www_form(username)}:#{URI.encode_www_form(password)}@#{host}:#{port}/#{dbname}"
+
+    System.put_env("DATABASE_URL", dsn)
+  end
+```
+

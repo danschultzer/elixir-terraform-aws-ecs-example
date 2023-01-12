@@ -122,27 +122,30 @@ resource "aws_ecs_task_definition" "app" {
         }
       ]
 
-      environment = [
-        # The following config can be used if you don't want to specify a
-        # domain and just use the whatever DNS hostname the load balancer has.
-        # In a Phoenix app you could configure the url at runtime with:
-        #
-        # uri = URI.parse(System.get_env("MY_APP_HOST", "example.com"))
-        #
-        # config :my_app_web, MyAppWeb.Endpoint,
-        #   url: [host: uri.host, port: uri.port || 81],
-        #
-        # {
-        #  name  = "MY_APP_HOST"
-        #  value = aws_lb.this.dns_name
-        # },
+      # The following config can be used if you don't want to specify a
+      # domain and just use the whatever DNS hostname the load balancer has.
+      # In a Phoenix app you could configure the url at runtime with:
+      #
+      # uri = URI.parse(System.get_env("MY_APP_HOST", "example.com"))
+      #
+      # config :my_app_web, MyAppWeb.Endpoint,
+      #   url: [host: uri.host, port: uri.port || 81],
+      #
+      # environment = [
+      #   {
+      #    name  = "MY_APP_HOST"
+      #    value = aws_lb.this.dns_name
+      #   }
+      # ]
+
+      secrets = [
         {
-          name  = "SECRET_KEY_BASE"
-          value = random_password.secret_key_base.result
+          name      = "SECRET_KEY_BASE"
+          valueFrom = aws_secretsmanager_secret_version.secret_key_base.arn
         },
         {
-          name  = "DATABASE_URL"
-          value = "${aws_db_instance.db.engine}://${urlencode(var.rds_db_username)}:${urlencode(random_password.db_password.result)}@${aws_db_instance.db.endpoint}/${urlencode(aws_db_instance.db.db_name)}"
+          name      = "DATABASE_CREDENTIALS"
+          valueFrom = aws_secretsmanager_secret_version.db_credentials.arn
         }
       ]
     }
@@ -201,6 +204,16 @@ resource "aws_iam_policy" "ecs_task_execution" {
             "ecr:GetAuthorizationToken"
         ],
         "Resource": "*"
+    },
+    {
+        "Effect": "Allow",
+        "Action": [
+            "secretsmanager:GetSecretValue"
+        ],
+        "Resource": [
+            "${aws_secretsmanager_secret.secret_key_base.arn}",
+            "${aws_secretsmanager_secret.db_credentials.arn}"
+        ]
     }
   ]
 }
