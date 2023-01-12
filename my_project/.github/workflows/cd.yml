@@ -30,6 +30,19 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v1
 
+      # The following prepends the .release/entrypoint.sh shell script with RELEASE_NODE env var.
+      # Change the path if the entrypoint shell script is located in a different place.
+      #
+      # Please make sure that `curl` and `jq` is being installed in the release image.
+      - name: Add RELEASE_NODE variable in entrypoint.sh
+        run: |
+          mv .release/entrypoint.sh /tmp/entrypoint.sh
+          cat - /tmp/entrypoint.sh <<'SH' > .release/entrypoint.sh
+          export RELEASE_DISTRIBUTION=name
+          export RELEASE_NODE=node-${{ github.sha }}@`curl -s $ECS_CONTAINER_METADATA_URI_V4 | jq -r ".Networks[0].IPv4Addresses[0]"`
+
+          SH
+
       - name: Build image metadata
         id: meta
         uses: docker/metadata-action@v4

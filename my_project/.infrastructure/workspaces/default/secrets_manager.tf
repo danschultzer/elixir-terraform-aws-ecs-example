@@ -1,3 +1,13 @@
+resource "aws_secretsmanager_secret" "release_cookie" {
+  name                    = "${local.name}-release-cookie"
+  description             = "The release cookie for nodes to connect"
+  recovery_window_in_days = 0
+}
+resource "aws_secretsmanager_secret_version" "release_cookie" {
+  secret_id     = aws_secretsmanager_secret.release_cookie.id
+  secret_string = random_password.release_cookie.result
+}
+
 resource "aws_secretsmanager_secret" "secret_key_base" {
   name                    = "${local.name}-phoenix-secret-key-base"
   description             = "Secret key base for Phoenix apps"
