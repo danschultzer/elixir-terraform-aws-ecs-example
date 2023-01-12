@@ -38,3 +38,26 @@ variable "vpc_availability_zones" {
   default     = null
   description = "Availability zones for subnets"
 }
+
+variable "rds_db_username" {
+  description = "The RDS database username"
+  type        = string
+  default     = "dbuser"
+}
+
+variable "rds_db_port" {
+  description = "The RDS database port"
+  type        = number
+  default     = null
+}
+
+variable "rds_instance_type" {
+  default     = "db.m6g.large"
+  description = "RDS instance type"
+}
+
+variable "rds_encrypt_at_rest" {
+  default     = false
+  description = "DB encryption setting"
+}
+

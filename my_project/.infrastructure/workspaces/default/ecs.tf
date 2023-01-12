@@ -139,6 +139,10 @@ resource "aws_ecs_task_definition" "app" {
         {
           name  = "SECRET_KEY_BASE"
           value = random_password.secret_key_base.result
+        },
+        {
+          name  = "DATABASE_URL"
+          value = "${aws_db_instance.db.engine}://${urlencode(var.rds_db_username)}:${urlencode(random_password.db_password.result)}@${aws_db_instance.db.endpoint}/${urlencode(aws_db_instance.db.db_name)}"
         }
       ]
     }
