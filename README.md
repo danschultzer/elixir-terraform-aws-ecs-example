@@ -38,6 +38,8 @@ Github Actions will need all the variables from the terraform output set for the
 
 ## Elixir code changes
 
+### Database URL
+
 The terraform build is set up to use Secrets Manager for the database. Furthermore password rotation is supported, however that means we can't store the connection string as is. Instead we need to build it (or if you prefer you can also just pass in the host/username/password directly):
 
 ```elixir
@@ -59,3 +61,25 @@ The terraform build is set up to use Secrets Manager for the database. Furthermo
   end
 ```
 
+### Elixir cluster
+
+Private DNS is used for cluster discovery. You should setup libcluster with the following `config/runtime.ex` configuration:
+
+```elixir
+case System.fetch_env("DNS_POLL_QUERY") do
+  :error ->
+    :ok
+  
+  {:ok, query} ->
+    [node_basename, _host] = String.split(System.fetch_env!("RELEASE_NODE"), "@")
+
+    config :libcluster,
+      topologies: [
+        dns: [
+          strategy: Cluster.Strategy.DNSPoll,
+          config: [
+            polling_interval: 1_000,
+            query: query,
+            node_basename: node_basename]]]
+end
+```

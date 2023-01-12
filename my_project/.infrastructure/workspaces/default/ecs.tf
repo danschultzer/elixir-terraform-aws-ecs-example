@@ -2,6 +2,15 @@ locals {
   ecs_container_name = local.name
 }
 
+# Generate a release cookie for distributed Elixir nodes 
+resource "random_password" "release_cookie" {
+  length  = 64
+  special = true
+  numeric = true
+  upper   = true
+  lower   = true
+}
+
 # Generate a random secret key base
 resource "random_password" "secret_key_base" {
   length  = 64
@@ -45,6 +54,14 @@ resource "aws_security_group" "app" {
     to_port         = 0
     protocol        = "-1"
     security_groups = [aws_security_group.lb.id]
+  }
+
+  ingress {
+    description = "Allow Elixir cluster to connect"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    self        = true
   }
 
   egress {
@@ -131,23 +148,31 @@ resource "aws_ecs_task_definition" "app" {
         }
       ]
 
-      # The following config can be used if you don't want to specify a
-      # domain and just use the whatever DNS hostname the load balancer has.
-      # In a Phoenix app you could configure the url at runtime with:
-      #
-      # uri = URI.parse(System.get_env("MY_APP_HOST", "example.com"))
-      #
-      # config :my_app_web, MyAppWeb.Endpoint,
-      #   url: [host: uri.host, port: uri.port || 81],
-      #
-      # environment = [
-      #   {
-      #    name  = "MY_APP_HOST"
-      #    value = aws_lb.this.dns_name
-      #   }
-      # ]
+      environment = [
+        # The following config can be used if you don't want to specify a
+        # domain and just use the whatever DNS hostname the load balancer has.
+        # In a Phoenix app you could configure the url at runtime with:
+        #
+        # uri = URI.parse(System.get_env("MY_APP_HOST", "example.com"))
+        #
+        # config :my_app_web, MyAppWeb.Endpoint,
+        #   url: [host: uri.host, port: uri.port || 81],
+        #
+        # {
+        #  name  = "MY_APP_HOST"
+        #  value = aws_lb.this.dns_name
+        # }
+        {
+          name  = "DNS_POLL_QUERY"
+          value = "${local.ecs_container_name}.${aws_service_discovery_private_dns_namespace.app.name}"
+        }
+      ]
 
       secrets = [
+        {
+          name      = "RELEASE_COOKIE"
+          valueFrom = aws_secretsmanager_secret_version.release_cookie.arn
+        },
         {
           name      = "SECRET_KEY_BASE"
           valueFrom = aws_secretsmanager_secret_version.secret_key_base.arn
@@ -188,6 +213,12 @@ resource "aws_ecs_service" "app" {
     security_groups  = [aws_security_group.app.id]
     subnets          = module.vpc.private_subnets
     assign_public_ip = false
+  }
+
+  # Enable elixir cluster discovery
+  service_registries {
+    registry_arn   = aws_service_discovery_service.app.arn
+    container_name = local.ecs_container_name
   }
 
   lifecycle {
@@ -249,6 +280,7 @@ resource "aws_iam_policy" "ecs_task_execution" {
             "secretsmanager:GetSecretValue"
         ],
         "Resource": [
+            "${aws_secretsmanager_secret.release_cookie.arn}",
             "${aws_secretsmanager_secret.secret_key_base.arn}",
             "${aws_secretsmanager_secret.db_credentials.arn}"
         ]
@@ -300,4 +332,25 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
 resource "aws_iam_role_policy_attachment" "ecs_task_app" {
   role       = aws_iam_role.ecs_task_app.name
   policy_arn = aws_iam_policy.ecs_task_app.arn
+}
+
+# Enable elixir cluster discovery
+resource "aws_service_discovery_private_dns_namespace" "app" {
+  name = "${local.name}.local"
+  vpc  = module.vpc.vpc_id
+}
+
+resource "aws_service_discovery_service" "app" {
+  name = local.name
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.app.id
+
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+
+    routing_policy = "MULTIVALUE"
+  }
 }
