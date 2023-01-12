@@ -26,9 +26,19 @@ resource "aws_security_group" "lb" {
   description = "Controls access to the load balancer"
   vpc_id      = module.vpc.vpc_id
 
+  # app1
   ingress {
     from_port        = 80
     to_port          = 80
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  # app2
+  ingress {
+    from_port        = 8080
+    to_port          = 8080
     protocol         = "tcp"
     cidr_blocks      = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
@@ -83,8 +93,8 @@ resource "aws_lb" "this" {
 }
 
 # Target group for the load balancer
-resource "aws_lb_target_group" "this" {
-  name        = local.name
+resource "aws_lb_target_group" "app1" {
+  name        = "${local.name}-app1"
   port        = 80
   protocol    = "HTTP"
   vpc_id      = module.vpc.vpc_id
@@ -97,15 +107,42 @@ resource "aws_lb_target_group" "this" {
   }
 }
 
-# Associate the load balancer with the target group via a listener
-resource "aws_lb_listener" "app" {
+# Target group for the load balancer for app2
+resource "aws_lb_target_group" "app2" {
+  name        = "${local.name}-app2"
+  port        = 8080
+  protocol    = "HTTP"
+  vpc_id      = module.vpc.vpc_id
+  target_type = "ip"
+
+  health_check {
+    enabled = true
+    path    = "/"
+    matcher = "200"
+  }
+}
+
+# Associate the load balancer with the app1 target group via a listener
+resource "aws_lb_listener" "app1" {
   load_balancer_arn = aws_lb.this.arn
   port              = 80
   protocol          = "HTTP"
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.this.arn
+    target_group_arn = aws_lb_target_group.app1.arn
+  }
+}
+
+# Associate the load balancer with the app2 target group via a listener
+resource "aws_lb_listener" "app2" {
+  load_balancer_arn = aws_lb.this.arn
+  port              = 8080
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app2.arn
   }
 }
 
@@ -141,9 +178,17 @@ resource "aws_ecs_task_definition" "app" {
       name      = local.ecs_container_name
 
       portMappings = [
+        # app1 port
         {
           containerPort = 4000
           hostPort      = 4000
+          protocol      = "tcp"
+        },
+
+        # app2 port
+        {
+          containerPort = 4100
+          hostPort      = 4100
           protocol      = "tcp"
         }
       ]
@@ -195,18 +240,51 @@ resource "aws_ecs_task_definition" "app" {
   ])
 }
 
-# Create the ECS service
-resource "aws_ecs_service" "app" {
-  name            = local.name
+# Create the app1 ECS service
+resource "aws_ecs_service" "app1" {
+  name            = "${local.name}-app1"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.app.arn
   desired_count   = 1
   launch_type     = "FARGATE"
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.this.arn
+    target_group_arn = aws_lb_target_group.app1.arn
     container_name   = local.ecs_container_name
     container_port   = 4000
+  }
+
+  network_configuration {
+    security_groups  = [aws_security_group.app.id]
+    subnets          = module.vpc.private_subnets
+    assign_public_ip = false
+  }
+
+  # Enable elixir cluster discovery
+  service_registries {
+    registry_arn   = aws_service_discovery_service.app.arn
+    container_name = local.ecs_container_name
+  }
+
+  lifecycle {
+    ignore_changes = [
+      task_definition # Managed by GitHub CD pipeline
+    ]
+  }
+}
+
+# Create the app2 ECS service
+resource "aws_ecs_service" "app2" {
+  name            = "${local.name}-app2"
+  cluster         = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.app.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app2.arn
+    container_name   = local.ecs_container_name
+    container_port   = 4100
   }
 
   network_configuration {

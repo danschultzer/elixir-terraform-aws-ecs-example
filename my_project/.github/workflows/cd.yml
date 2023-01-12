@@ -85,10 +85,18 @@ jobs:
            aws ecs describe-task-definition --task-definition ${{ vars.AWS_SERVICE_NAME }}-template --query taskDefinition > task-definition.json
            echo "`jq '.family="${{ vars.AWS_SERVICE_NAME }}" | .containerDefinitions[0].image="${{ env.DOCKER_IMAGE }}"' task-definition.json`" > task-definition.json
 
-      - name: Deploy container
+      - name: Deploy app1
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: task-definition.json
           cluster: ${{ vars.AWS_SERVICE_NAME }}
-          service: ${{ vars.AWS_SERVICE_NAME }}
+          service: ${{ vars.AWS_SERVICE_NAME }}-app1
+          wait-for-service-stability: true
+
+      - name: Deploy app2
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          cluster: ${{ vars.AWS_SERVICE_NAME }}
+          service: ${{ vars.AWS_SERVICE_NAME }}-app2
           wait-for-service-stability: true
