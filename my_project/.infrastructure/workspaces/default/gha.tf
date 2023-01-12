@@ -1,5 +1,6 @@
 locals {
   ecr_name = replace(aws_ecr_repository.this.name, "/", "-")
+  ecs_name = aws_ecs_cluster.this.name
 }
 
 resource "aws_iam_role" "github_actions_ecr" {
@@ -65,5 +66,45 @@ data "aws_iam_policy_document" "github_actions_oidc" {
 
       values = ["repo:${var.github_repository}:*"]
     }
+  }
+}
+
+resource "aws_iam_role" "github_actions_ecs" {
+  name               = "github-actions-ecs-${local.ecs_name}"
+  description        = "Allow for github actions to deploy to ${local.ecs_name} ECS"
+  assume_role_policy = data.aws_iam_policy_document.github_actions_oidc.json
+  inline_policy {
+    name   = "${local.ecs_name}-ecs"
+    policy = data.aws_iam_policy_document.github_actions_ecs.json
+  }
+}
+
+data "aws_iam_policy_document" "github_actions_ecs" {
+  statement {
+    sid    = "RegisterTaskDefinition"
+    effect = "Allow"
+    actions = [
+      "ecs:DescribeTaskDefinition",
+      "ecs:RegisterTaskDefinition"
+    ]
+    resources = ["*"]
+  }
+  statement {
+    sid     = "PassRolesInTaskDefinition"
+    effect  = "Allow"
+    actions = ["iam:PassRole"]
+    resources = [
+      aws_iam_role.ecs_task_app.arn,
+      aws_iam_role.ecs_task_execution.arn
+    ]
+  }
+  statement {
+    sid    = "DeployService"
+    effect = "Allow"
+    actions = [
+      "ecs:UpdateService",
+      "ecs:DescribeServices"
+    ]
+    resources = [aws_ecs_service.app.id]
   }
 }

@@ -102,9 +102,13 @@ resource "aws_ecs_cluster" "this" {
   name = local.name
 }
 
-# Create the ECS task definition
+# Create the ECS task definition template
 resource "aws_ecs_task_definition" "app" {
-  family                   = aws_ecs_cluster.this.name
+  # GitHub CD pipeline will use this template for the Github Actions managed
+  # task definition. Any modifications to this template will be reflected
+  # in the next deployment (you may want to manually trigger it after terraform
+  # apply).
+  family                   = "${aws_ecs_cluster.this.name}-template"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = 1024
@@ -116,7 +120,7 @@ resource "aws_ecs_task_definition" "app" {
   container_definitions = jsonencode([
     {
       essential = true
-      image     = "${aws_ecr_repository.this.repository_url}:latest"
+      image     = "TO_BE_REPLACED"
       name      = local.ecs_container_name
 
       portMappings = [
@@ -184,6 +188,12 @@ resource "aws_ecs_service" "app" {
     security_groups  = [aws_security_group.app.id]
     subnets          = module.vpc.private_subnets
     assign_public_ip = false
+  }
+
+  lifecycle {
+    ignore_changes = [
+      task_definition # Managed by GitHub CD pipeline
+    ]
   }
 }
 
