@@ -1,0 +1,72 @@
+
+name: integration-test
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      LOCALSTACK_API_KEY: ${{ secrets.LOCALSTACK_API_KEY }}
+      DNS_ADDRESS: 127.0.0.1
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Start LocalStack
+        run: |
+          pip install localstack terraform-local    # install LocalStack cli and terraform-local
+          docker pull localstack/localstack-pro     # Make sure to pull the latest version of the image
+
+          localstack start -d                       # Start LocalStack in the background
+          
+          echo "Waiting for LocalStack startup..."  # Wait 30 seconds for the LocalStack container
+          localstack wait -t 30                     # to become ready before timing out 
+          echo "Startup complete"          
+
+      - name: Terraform apply
+        run: |
+          cp ./.github/integration_test.tfvars /tmp/integration_test.tfvars
+
+          BRANCH=`git rev-parse --abbrev-ref HEAD`
+          CODEDEPLOY_COMMIT_HASH=`git log --grep="CodeDeploy" --format='%H'`
+
+          for COMMIT_HASH in $(git rev-list --reverse $BRANCH)
+          do
+            git checkout -f $COMMIT_HASH
+
+            if $COMMIT_HASH == $CODEDEPLOY_COMMIT_HASH; then
+              echo "LocalStack doesn't support CodeDeploy so skipping the commit"
+              continue
+            fi
+
+            if [ -f "my_project/.infrastructure/workspaces/default/version.tf" ]; then
+              GIT_MESSAGE=`git show --oneline -s`
+              echo "Testing $GIT_MESSAGE"
+
+              if [ -f "my_project/.infrastructure/workspaces/default/code_deploy.tf" ]; then
+                echo "LocalStack doesn't support CodeDeploy so reverting the commit"
+                git revert --no-commit $CODEDEPLOY_COMMIT_HASH
+              fi
+
+              if [[ $GIT_MESSAGE =~ "Make Github Actions trigger deployment" ]] || [[ $GIT_MESSAGE =~ "Monolith with secondary port deployment strategy" ]]; then
+                echo "LocalStack has issues with continuing TF apply with this commit so we'll reset the TF env"
+                localstack stop
+                localstack start -d
+                localstack wait -t 30
+                rm my_project/.infrastructure/workspaces/default/terraform.tfstate
+              fi
+
+              cd my_project/.infrastructure/workspaces/default
+              tflocal init
+              tflocal apply -var-file=/tmp/integration_test.tfvars --input=false --auto-approve
+              cd ../../../../
+            fi
+          done
