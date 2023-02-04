@@ -70,3 +70,113 @@ jobs:
               cd ../../../../
             fi
           done
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: 25.0
+          elixir-version: 1.14
+
+      - name: Prepare Phoenix app
+        run: |
+          echo "y" | mix archive.install hex phx_new
+          echo "y" | mix phx.new my_project --install
+          cd my_project
+
+          mix phx.gen.release --docker
+          mkdir .release
+          mv .dockerignore Dockerfile ./.release/
+
+          <<'SH' > .release/entrypoint.sh
+          bin/my_project eval "MyProject.Release.migrate()"
+          bin/my_project start
+          SH
+
+      - name: Manual changes to Phoenix app
+        run: |
+          # Set up DB credentials config
+          RUNTIME_CONFIG_MATCH='import Config'
+          RUNTIME_CONFIG_DB_CREDENTIALS='
+          # AWS RDS rotation requires us to store db credentials in a specific format
+          # in Secrets Manager so we will build the DSN here
+          if credentials = System.get_env("DATABASE_CREDENTIALS") do
+            %{
+              "engine" => engine,
+              "host" => host,
+              "username" => username,
+              "password" => password,
+              "dbname" => dbname,
+              "port" => port
+            } = Jason.decode!(credentials)
+
+            dsn = "#{engine}://#{URI.encode_www_form(username)}:#{URI.encode_www_form(password)}@#{host}:#{port}/#{dbname}"
+
+            System.put_env("DATABASE_URL", dsn)
+          end
+          '
+
+          sed -i "s/$RUNTIME_CONFIG_MATCH/$RUNTIME_CONFIG_MATCH\n\n$RUNTIME_CONFIG_DB_CREDENTIALS\n/" config/runtime.exs
+
+          # Set up libcluster
+
+          RUNTIME_CONFIG_MATCH='import Config'
+          RUNTIME_CONFIG_LIBCLUSTER='
+          case System.fetch_env("DNS_POLL_QUERY") do
+            :error ->
+              :ok
+            
+            {:ok, query} ->
+              [node_basename, _host] = String.split(System.fetch_env!("RELEASE_NODE"), "@")
+
+              config :libcluster,
+                topologies: [
+                  dns: [
+                    strategy: Cluster.Strategy.DNSPoll,
+                    config: [
+                      polling_interval: 1_000,
+                      query: query,
+                      node_basename: node_basename]]]
+          end
+          '
+          sed -i "s/$RUNTIME_CONFIG_MATCH/$RUNTIME_CONFIG_MATCH\n\n$RUNTIME_CONFIG_LIBCLUSTER\n/" config/runtime.exs
+          sed -i "s/{:postgres, /      {:libcluster, \"~> 3.2\"},\n{:postgres, /" mix.exs
+
+      - name: Add RELEASE_NODE variable in entrypoint.sh
+        run: |
+          mv .release/entrypoint.sh /tmp/entrypoint.sh
+          cat - /tmp/entrypoint.sh <<'SH' > .release/entrypoint.sh
+          export RELEASE_DISTRIBUTION=name
+          export RELEASE_NODE=node-${{ github.sha }}@`curl -s $ECS_CONTAINER_METADATA_URI_V4 | jq -r ".Networks[0].IPv4Addresses[0]"`
+
+          SH
+
+      - name: Build, tag, and push to ECR
+        id: docker-build
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          # Replace this if the dockerfile is at a different path
+          file: .release/Dockerfile
+          push: true
+          tags: localhost:4510/my_org/my_project:sha-1
+
+      - name: Setup AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: "arn:aws:iam::000000000000:role/github-actions-ecr-my_org-my_project"
+          aws-region: "us-east-1"
+          http-proxy: "http://localhost:4566"
+
+      - name: Build ECS task definition
+        run: |
+          pip install aws-local[ver1]
+          awslocal ecs describe-task-definition --task-definition my-project-test-template --query taskDefinition > task-definition.json
+          echo "`jq '.family="my-project-test" | .containerDefinitions[0].image="localhost:4510/my_org/my_project:sha-1"' task-definition.json`" > task-definition.json
+
+      - name: Deploy app1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          cluster: my-project-test
+          service: my-project-test-app1
+          wait-for-service-stability: true
