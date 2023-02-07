@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - integration-test-deployment
 
 jobs:
   integration:
@@ -70,3 +71,96 @@ jobs:
               cd ../../../../
             fi
           done
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: 25.0
+          elixir-version: 1.14
+
+      - name: Prepare Phoenix app
+        run: |
+          echo "y" | mix archive.install hex phx_new
+          echo "y" | mix phx.new my_project --install
+          cd my_project
+
+          mix phx.gen.release --docker
+          mkdir .release
+          mv .dockerignore Dockerfile ./.release/
+
+          <<'SH' > .release/entrypoint.sh
+          bin/my_project eval "MyProject.Release.migrate()"
+          bin/my_project start
+          SH
+
+      - name: Manual changes to Phoenix app
+        run: |
+          cd my_project
+          elixir ../.github/injection.exs db_config
+          elixir ../.github/injection.exs libcluster_config
+          elixir ../.github/injection.exs mix_dep_libcluster
+
+          cp ../.github/integration_check_plug.ex ./lib/my_project_web/integration_check_plug.ex
+          elixir ../.github/injection.exs integration_check_plug
+
+      - name: Add RELEASE_NODE variable in entrypoint.sh
+        run: |
+          cd my_project
+          mv .release/entrypoint.sh /tmp/entrypoint.sh
+          cat - /tmp/entrypoint.sh <<'SH' > .release/entrypoint.sh
+          export RELEASE_DISTRIBUTION=name
+          export RELEASE_NODE=node-${{ github.sha }}@`curl -s $ECS_CONTAINER_METADATA_URI_V4 | jq -r ".Networks[0].IPv4Addresses[0]"`
+
+          SH
+
+      - name: Build, tag, and push to ECR
+        id: docker-build
+        uses: docker/build-push-action@v3
+        env:
+          # There's a problem with LocalStack pro that makes it so the image can't be pushed
+          # https://github.com/localstack/localstack/issues/4725
+          LOCALSTACK_API_KEY: ""
+        with:
+          context: my_project/
+          # Replace this if the dockerfile is at a different path
+          file: my_project/.release/Dockerfile
+          push: true
+          tags: localhost:4510/my_org/my_project:sha-1
+
+      - name: Build ECS task definition
+        run: |
+          cd my_project
+          pip install awscli-local[ver1]
+          awslocal ecs describe-task-definition --task-definition my-project-test-template --query taskDefinition > task-definition.json
+          echo "`jq '.family="my-project-test" | .containerDefinitions[0].image="localhost:4510/my_org/my_project:sha-1"' task-definition.json`" > task-definition.json
+
+      - name: Deploy app1
+        # We are simulating the aws-actions/amazon-ecs-deploy-task-definition here since it doesn't allow for overriding endpoint
+        run:
+          cd my_project
+          echo "`jq 'del(.compatibilities) | del(.taskDefinitionArn) | del(.requiresAttributes) | del(.revision) | del(.status) | del(.registeredAt) | del(.registeredBy)' task-definition.json`" > task-definition.json
+          JSON=`awslocal ecs register-task-definition --cli-input-json file://task-definition.json`
+          ARN=`jq -r '.taskDefinition.taskDefinitionArn' <<< $JSON`
+          awslocal ecs update-service --service my-project-test-app1 --cluster my-project-test --task-definition $ARN
+          awslocal ecs wait services-stable --cluster my-project-test --services my-project-test-app1
+
+      - name: Deploy app2
+        # We are simulating the aws-actions/amazon-ecs-deploy-task-definition here since it doesn't allow for overriding endpoint
+        run:
+          cd my_project
+          echo "`jq 'del(.compatibilities) | del(.taskDefinitionArn) | del(.requiresAttributes) | del(.revision) | del(.status) | del(.registeredAt) | del(.registeredBy)' task-definition.json`" > my_project/task-definition.json
+          JSON=`awslocal ecs register-task-definition --cli-input-json file://task-definition.json`
+          ARN=`jq -r '.taskDefinition.taskDefinitionArn' <<< $JSON`
+          awslocal ecs update-service --service my-project-test-app2 --cluster my-project-test --task-definition $ARN
+          awslocal ecs wait services-stable --cluster my-project-test --services my-project-test-app2
+
+      - name: Ensure app is healthy
+        run: |
+          JSON=`curl http://my-project-test.elb.localhost.localstack.cloud:4566/integration-check`
+          echo $JSON
+          ERROR=`jq -r ".error" <<< $JSON`
+          if [ $ERROR != null ];
+          then
+            echo "Received an error: $ERROR"
+            exit 1
+          fi
